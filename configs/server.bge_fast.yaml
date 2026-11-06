@@ -1,0 +1,24 @@
+llm:
+  base_url: http://127.0.0.1:8001/v1
+  model: gbtrag-llama8b
+embedding:
+  model_path: ./models/bge-base-en-v1.5
+  device: cuda:0
+  query_prefix: ''
+  passage_prefix: ''
+  symmetric_prefix: ''
+reranker:
+  model_path: ./models/bge-reranker-v2-m3
+  device: cuda:0
+retrieval:
+  scope: candidate_debug
+server_data_paths:
+  asqa: ./data/asqa/dev.json
+  hotpotqa: ./data/hotpotqa/hotpot_dev_distractor_v1.json
+  musique: ./data/musique/musique_ans_v1.0_dev.jsonl
+  twowiki: ./data/twowiki/dev.json
+data:
+  path: ${server_data_paths.${data.name}}
+  expected_pool_size: null
+experiment:
+  methods: [gbtrag]

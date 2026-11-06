@@ -1,0 +1,523 @@
+import argparse
+import json
+import os
+import sys
+from collections import defaultdict
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+
+def load_all_results(results_dir: str) -> dict:
+
+    if not os.path.isdir(results_dir):
+        print(f"[analyze] ERROR: results directory not found: {results_dir}")
+        return {}
+
+
+    newest: dict = {}
+
+    for root, _dirs, files in os.walk(results_dir):
+        for fname in files:
+            if not fname.endswith(".json"):
+                continue
+            full_path = os.path.join(root, fname)
+
+
+            rel = os.path.relpath(root, results_dir)
+            dataset = rel.split(os.sep)[0] if rel != "." else "unknown"
+
+
+            parts = fname.replace(".json", "").split("_")
+
+            if len(parts) >= 3 and parts[-1].isdigit() and parts[-2].isdigit():
+                method = "_".join(parts[:-3]) or "_".join(parts[:-2])
+
+            else:
+                method = "_".join(parts)
+
+            try:
+                mtime = os.path.getmtime(full_path)
+            except OSError:
+                mtime = 0
+
+            key = (dataset, method)
+            if key not in newest or mtime > newest[key][0]:
+                newest[key] = (mtime, full_path)
+
+
+    out: dict = defaultdict(dict)
+    for (dataset, method), (_, path) in newest.items():
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+
+            stored_method = data.get("method", method)
+            stored_dataset = data.get("dataset", dataset)
+            out[stored_dataset][stored_method] = data
+        except Exception as e:
+            print(f"[analyze] Warning: could not load {path}: {e}")
+
+    for dataset, methods in out.items():
+        print(f"[analyze] Loaded {len(methods)} method(s) for dataset '{dataset}': "
+              f"{sorted(methods.keys())}")
+
+    return dict(out)
+
+
+def _get_metrics(result_dict: dict) -> dict:
+
+    return result_dict.get("metrics", {})
+
+
+_DATASET_ORDER  = ["hotpotqa", "musique", "twowiki"]
+_METHOD_ORDER   = ["gbtrag", "single_tree", "iterative_rag", "self_refine", "standard_rag"]
+_METHOD_DISPLAY = {
+    "gbtrag":       "GBTRAG (ours)",
+    "single_tree":  "SingleTree",
+    "iterative_rag":"IterativeRAG",
+    "self_refine":  "SelfRefineRAG",
+    "standard_rag": "StandardRAG",
+}
+
+
+def print_comparison_table(results: dict) -> None:
+
+    if not results:
+        print("[analyze] No results to display.")
+        return
+
+    datasets = [d for d in _DATASET_ORDER if d in results] + \
+               [d for d in sorted(results) if d not in _DATASET_ORDER]
+
+    for dataset in datasets:
+        methods_data = results[dataset]
+        print(f"\n{'='*60}")
+        print(f"  Dataset: {dataset.upper()}")
+        print(f"{'='*60}")
+        print(f"  {'Method':<22} {'F1 (%)':>9} {'EM (%)':>9} "
+              f"{'F1±std':>9} {'N':>6} {'T/Q':>7}")
+        print(f"  {'-'*56}")
+
+        ordered = [m for m in _METHOD_ORDER if m in methods_data] + \
+                  [m for m in sorted(methods_data) if m not in _METHOD_ORDER]
+
+        for method in ordered:
+            m = _get_metrics(methods_data[method])
+            f1    = m.get("f1", 0) * 100
+            em    = m.get("em", 0) * 100
+            f1std = m.get("f1_std", 0) * 100
+            n     = m.get("n", 0)
+            tpq   = m.get("time_per_sample", 0)
+            label = _METHOD_DISPLAY.get(method, method)
+            print(f"  {label:<22} {f1:>8.2f}% {em:>8.2f}%  "
+                  f"±{f1std:>5.2f}%  {n:>5}  {tpq:>5.1f}s")
+
+    print()
+
+
+def print_latex_table(results: dict) -> None:
+
+    if not results:
+        return
+
+    datasets = [d for d in _DATASET_ORDER if d in results] + \
+               [d for d in sorted(results) if d not in _DATASET_ORDER]
+
+
+    all_methods = []
+    for m in _METHOD_ORDER:
+        if any(m in results[d] for d in datasets):
+            all_methods.append(m)
+    extras = sorted(
+        set(m for d in datasets for m in results[d]) - set(_METHOD_ORDER)
+    )
+    all_methods.extend(extras)
+
+
+    col_spec = "l" + "cc" * len(datasets)
+    dataset_headers = " & ".join(
+        f"\\multicolumn{{2}}{{c}}{{{d.capitalize()}}}" for d in datasets
+    )
+    sub_headers = " & ".join(["F1 & EM"] * len(datasets))
+
+
+    best_f1: dict = {}
+    best_em: dict = {}
+    for dataset in datasets:
+        f1s = [_get_metrics(results[dataset].get(m, {})).get("f1", 0)
+               for m in all_methods]
+        ems = [_get_metrics(results[dataset].get(m, {})).get("em", 0)
+               for m in all_methods]
+        best_f1[dataset] = max(f1s) if f1s else 0
+        best_em[dataset] = max(ems) if ems else 0
+
+    def cell(val: float, best: float) -> str:
+        s = f"{val*100:.1f}"
+        return f"\\textbf{{{s}}}" if abs(val - best) < 1e-4 and best > 0 else s
+
+    lines = [
+        "% Auto-generated by experiments/analyze.py",
+        f"\\begin{{tabular}}{{{col_spec}}}",
+        "\\toprule",
+        f"Method & {dataset_headers} \\\\",
+        f" & {sub_headers} \\\\",
+        "\\midrule",
+    ]
+
+    for method in all_methods:
+        label = _METHOD_DISPLAY.get(method, method).replace("_", "\\_")
+        cols  = []
+        for dataset in datasets:
+            m = _get_metrics(results[dataset].get(method, {}))
+            f1 = m.get("f1", 0)
+            em = m.get("em", 0)
+            cols.append(cell(f1, best_f1[dataset]))
+            cols.append(cell(em, best_em[dataset]))
+        lines.append(f"{label} & {' & '.join(cols)} \\\\")
+
+    lines += ["\\bottomrule", "\\end{tabular}"]
+
+    print("\n% ── LaTeX Table ──────────────────────────────────────")
+    print("\n".join(lines))
+    print("% ─────────────────────────────────────────────────────\n")
+
+
+def _ensure_matplotlib():
+
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        return plt
+    except ImportError:
+        print("[analyze] Warning: matplotlib not installed — skipping plots.")
+        return None
+
+
+def plot_convergence(results_dir: str, figure_dir: str) -> None:
+
+    plt = _ensure_matplotlib()
+    if plt is None:
+        return
+
+    import numpy as np
+
+    all_results = load_all_results(results_dir)
+
+    fig, axes = plt.subplots(1, max(len(all_results), 1),
+                             figsize=(5 * max(len(all_results), 1), 4),
+                             squeeze=False)
+    axes = axes[0]
+
+    plotted = 0
+    for ax, (dataset, methods_data) in zip(axes, all_results.items()):
+        if "gbtrag" not in methods_data:
+            ax.set_visible(False)
+            continue
+
+        bright_data = methods_data["gbtrag"]
+        samples     = bright_data.get("results", [])
+        if not samples:
+            ax.set_visible(False)
+            continue
+
+
+        loss_lists = [
+            s.get("losses", []) for s in samples if s.get("losses")
+        ]
+        if not loss_lists:
+            ax.set_visible(False)
+            continue
+
+        max_rounds = max(len(l) for l in loss_lists)
+        padded = np.array([
+            l + [l[-1]] * (max_rounds - len(l))
+            for l in loss_lists
+        ])
+
+        mean_loss = padded.mean(axis=0)
+        std_loss  = padded.std(axis=0)
+        xs = np.arange(1, max_rounds + 1)
+
+        ax.plot(xs, mean_loss, marker="o", color="#1f77b4", linewidth=2,
+                label="Mean loss")
+        ax.fill_between(xs, mean_loss - std_loss, mean_loss + std_loss,
+                        alpha=0.2, color="#1f77b4")
+        ax.set_xlabel("Boosting Round")
+        ax.set_ylabel("Loss  L = Σ max(0, τ − cov)")
+        ax.set_title(f"GBTRAG Convergence — {dataset.capitalize()}")
+        ax.set_xticks(xs)
+        ax.legend()
+        ax.grid(axis="y", linestyle="--", alpha=0.4)
+        plotted += 1
+
+    if plotted == 0:
+        print("[analyze] plot_convergence: no GBTRAG results found with loss data.")
+        plt.close()
+        return
+
+    os.makedirs(figure_dir, exist_ok=True)
+    out = os.path.join(figure_dir, "convergence.pdf")
+    fig.tight_layout()
+    fig.savefig(out)
+    plt.close()
+    print(f"[analyze] Saved convergence plot → {out}")
+
+
+def plot_tree_evolution(results_dir: str, figure_dir: str) -> None:
+
+    plt = _ensure_matplotlib()
+    if plt is None:
+        return
+
+    import numpy as np
+
+    all_results = load_all_results(results_dir)
+
+    fig, axes = plt.subplots(1, max(len(all_results), 1),
+                             figsize=(5 * max(len(all_results), 1), 4),
+                             squeeze=False)
+    axes = axes[0]
+
+    plotted = 0
+    for ax, (dataset, methods_data) in zip(axes, all_results.items()):
+        if "gbtrag" not in methods_data:
+            ax.set_visible(False)
+            continue
+
+        samples = methods_data["gbtrag"].get("results", [])
+        if not samples:
+            ax.set_visible(False)
+            continue
+
+
+        max_rounds = max(
+            (len(s.get("trees", [])) for s in samples), default=0
+        )
+        if max_rounds == 0:
+            ax.set_visible(False)
+            continue
+
+        nodes_per_round  = [[] for _ in range(max_rounds)]
+        leaves_per_round = [[] for _ in range(max_rounds)]
+
+        for s in samples:
+            for r, tree_stat in enumerate(s.get("trees", [])):
+                if r < max_rounds:
+                    nodes_per_round[r].append(tree_stat.get("num_nodes", 0))
+                    leaves_per_round[r].append(tree_stat.get("num_leaves", 0))
+
+        xs     = np.arange(max_rounds)
+        mnodes = [np.mean(v) if v else 0 for v in nodes_per_round]
+        mleafs = [np.mean(v) if v else 0 for v in leaves_per_round]
+
+        ax.bar(xs - 0.2, mnodes, width=0.35, label="Nodes",  color="#1f77b4", alpha=0.8)
+        ax.bar(xs + 0.2, mleafs, width=0.35, label="Leaves", color="#ff7f0e", alpha=0.8)
+        ax.set_xlabel("Tree Index (0 = full, 1+ = residual)")
+        ax.set_ylabel("Average Count")
+        ax.set_title(f"Tree Size per Round — {dataset.capitalize()}")
+        ax.set_xticks(xs)
+        ax.set_xticklabels([f"Tree {i}" for i in range(max_rounds)])
+        ax.legend()
+        ax.grid(axis="y", linestyle="--", alpha=0.4)
+        plotted += 1
+
+    if plotted == 0:
+        print("[analyze] plot_tree_evolution: no GBTRAG results with tree data.")
+        plt.close()
+        return
+
+    os.makedirs(figure_dir, exist_ok=True)
+    out = os.path.join(figure_dir, "tree_evolution.pdf")
+    fig.tight_layout()
+    fig.savefig(out)
+    plt.close()
+    print(f"[analyze] Saved tree evolution plot → {out}")
+
+
+def plot_method_comparison(results_dir: str, figure_dir: str) -> None:
+
+    plt = _ensure_matplotlib()
+    if plt is None:
+        return
+
+    import numpy as np
+
+    all_results = load_all_results(results_dir)
+    if not all_results:
+        print("[analyze] plot_method_comparison: no results found.")
+        return
+
+    datasets = [d for d in _DATASET_ORDER if d in all_results] + \
+               [d for d in sorted(all_results) if d not in _DATASET_ORDER]
+
+    all_method_names = []
+    for m in _METHOD_ORDER:
+        if any(m in all_results[d] for d in datasets):
+            all_method_names.append(m)
+    for d in datasets:
+        for m in sorted(all_results[d]):
+            if m not in all_method_names:
+                all_method_names.append(m)
+
+    n_methods  = len(all_method_names)
+    n_datasets = len(datasets)
+    if n_methods == 0 or n_datasets == 0:
+        print("[analyze] plot_method_comparison: nothing to plot.")
+        return
+
+
+    palette = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd",
+               "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf"]
+    method_colors = {m: palette[i % len(palette)] for i, m in enumerate(all_method_names)}
+
+    bar_width = 0.8 / n_methods
+    x         = np.arange(n_datasets)
+
+    fig, ax = plt.subplots(figsize=(max(6, 2.5 * n_datasets), 5))
+
+    for i, method in enumerate(all_method_names):
+        f1s = []
+        for dataset in datasets:
+            m = _get_metrics(all_results[dataset].get(method, {}))
+            f1s.append(m.get("f1", 0) * 100)
+
+        offset = (i - n_methods / 2 + 0.5) * bar_width
+        label  = _METHOD_DISPLAY.get(method, method)
+        bars   = ax.bar(x + offset, f1s, width=bar_width * 0.9,
+                        label=label, color=method_colors[method], alpha=0.85)
+
+
+        for bar, val in zip(bars, f1s):
+            if val > 0:
+                ax.text(
+                    bar.get_x() + bar.get_width() / 2,
+                    bar.get_height() + 0.3,
+                    f"{val:.1f}",
+                    ha="center", va="bottom", fontsize=7, rotation=0,
+                )
+
+    ax.set_xticks(x)
+    ax.set_xticklabels([d.capitalize() for d in datasets], fontsize=11)
+    ax.set_ylabel("Token-level F1 (%)", fontsize=11)
+    ax.set_title("Method Comparison by Dataset", fontsize=13)
+    ax.legend(loc="lower right", fontsize=9)
+    ax.grid(axis="y", linestyle="--", alpha=0.4)
+    ax.set_ylim(0, min(100, ax.get_ylim()[1] * 1.12))
+
+    os.makedirs(figure_dir, exist_ok=True)
+    out = os.path.join(figure_dir, "comparison.pdf")
+    fig.tight_layout()
+    fig.savefig(out)
+    plt.close()
+    print(f"[analyze] Saved method comparison plot → {out}")
+
+
+def error_analysis(results_dir: str, n_examples: int = 10) -> None:
+
+    all_results = load_all_results(results_dir)
+    if not all_results:
+        return
+
+    from experiments.evaluate import f1_score, compute_score_with_aliases
+
+    baseline_names = ["standard_rag", "iterative_rag", "single_tree", "self_refine"]
+
+    for dataset, methods_data in all_results.items():
+        if "gbtrag" not in methods_data:
+            continue
+
+        gbtrag_samples = {
+            s.get("draw_id", s.get("id", str(i))): s
+            for i, s in enumerate(methods_data["gbtrag"].get("results", []))
+        }
+
+        print(f"\n{'='*64}")
+        print(f"  Error analysis — {dataset.upper()}")
+        print(f"  Samples where GBTRAG < best baseline (F1)")
+        print(f"{'='*64}")
+
+        failures = []
+        for sid, bs in gbtrag_samples.items():
+            pred_bright = bs.get("answer", "")
+            aliases     = bs.get("answer_aliases", [bs.get("gold", "")])
+            gbtrag_f1   = compute_score_with_aliases(pred_bright, aliases, f1_score)
+
+            best_base_f1   = 0.0
+            best_base_name = ""
+            best_base_pred = ""
+            for bname in baseline_names:
+                if bname not in methods_data:
+                    continue
+                bsamp_list = [
+                    s for s in methods_data[bname].get("results", [])
+                    if s.get("draw_id", s.get("id", "")) == sid
+                ]
+                if not bsamp_list:
+                    continue
+                bpred = bsamp_list[0].get("answer", "")
+                bf1   = compute_score_with_aliases(bpred, aliases, f1_score)
+                if bf1 > best_base_f1:
+                    best_base_f1   = bf1
+                    best_base_name = bname
+                    best_base_pred = bpred
+
+            if best_base_f1 > gbtrag_f1 + 0.05:
+                failures.append({
+                    "id":             sid,
+                    "question":       bs.get("question", ""),
+                    "gold":           bs.get("gold", ""),
+                    "bright_pred":    pred_bright,
+                    "gbtrag_f1":      gbtrag_f1,
+                    "best_baseline":  best_base_name,
+                    "baseline_pred":  best_base_pred,
+                    "baseline_f1":    best_base_f1,
+                    "gap":            best_base_f1 - gbtrag_f1,
+                })
+
+        failures.sort(key=lambda x: -x["gap"])
+        print(f"  {len(failures)} failures found (GBTRAG F1 < best baseline F1 by >5pp)")
+
+        for ex in failures[:n_examples]:
+            print(f"\n  [{ex['id']}]")
+            print(f"  Q    : {ex['question']}")
+            print(f"  Gold : {ex['gold']!r}")
+            print(f"  GBTRAG ({ex['gbtrag_f1']:.2f})   : {ex['bright_pred']!r}")
+            print(f"  Best ({ex['best_baseline']}, F1={ex['baseline_f1']:.2f}): "
+                  f"{ex['baseline_pred']!r}")
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(
+        description="Analyse GBTRAG experiment results",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=__doc__,
+    )
+    parser.add_argument("--results_dir", default="./results",
+                        help="Directory produced by experiments/run.py")
+    parser.add_argument("--figure_dir",  default="./figures",
+                        help="Directory where plots are saved")
+    parser.add_argument("--latex",       action="store_true",
+                        help="Also print LaTeX table")
+    parser.add_argument("--errors",      action="store_true",
+                        help="Print error analysis (GBTRAG failures)")
+    parser.add_argument("--no_plots",    action="store_true",
+                        help="Skip matplotlib plots")
+    args = parser.parse_args()
+
+    results = load_all_results(args.results_dir)
+
+    print_comparison_table(results)
+
+    if args.latex:
+        print_latex_table(results)
+
+    if not args.no_plots:
+        plot_convergence(args.results_dir, args.figure_dir)
+        plot_tree_evolution(args.results_dir, args.figure_dir)
+        plot_method_comparison(args.results_dir, args.figure_dir)
+    else:
+        print("[analyze] Skipping plots (--no_plots).")
+
+    if args.errors:
+        error_analysis(args.results_dir)

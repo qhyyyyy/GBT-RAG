@@ -1,0 +1,84 @@
+llm:
+  base_url: http://127.0.0.1:8001/v1
+  model: gbtrag-llama8b
+  temperature: 0.0
+  max_tokens: 2048
+  final_max_tokens: 256
+  rewrite_max_tokens: 256
+  timeout: 180
+  seed: 42
+  max_retries: 2
+embedding:
+  model_path: ./models/e5-base-v2
+  device: auto
+  local_files_only: true
+  max_seq_length: 512
+  query_prefix: 'query: '
+  passage_prefix: 'passage: '
+  symmetric_prefix: 'query: '
+reranker:
+  enabled: true
+  model_path: ./models/bge-reranker-v2-m3
+  device: auto
+  top_k: 5
+gbtrag:
+  max_rounds: 3
+  coverage_threshold: 0.65
+  grounding_threshold: 0.55
+  dimension_dedup_threshold: 0.85
+  dead_leaf_coverage_cutoff: 0.15
+  dead_leaf_evidence_cutoff: 0.30
+  convergence_epsilon: 0.01
+  stagnation_delta: 0.001
+  max_total_leaves: 24
+  generic_dimensions: 4
+  sub_aspects_per_dim: 3
+  max_tree_depth_round0: 2
+  max_tree_depth_residual: 2
+  max_children: 4
+  force_root_split: true
+  enable_dimension_discovery: true
+  enable_dead_leaf_pruning: true
+  enable_monotone_gate: true
+  rollback_tolerance: 0.0
+  phase0_mode: auto
+  tree_mode: deterministic
+  compose_op: rewrite
+  self_consistency_check: false
+  shortform_agg_target_words: 80
+  longform_agg_target_words: 250
+  compress_output: false
+  compress_target_words: 65
+  compress_structure_hint: natural prose sentences, one per interpretation
+retrieval:
+  method: dense
+  scope: global
+  allow_debug_corpus: false
+  index_dir: ./corpus/dpr_wikipedia_e5
+  top_k: 10
+data:
+  name: hotpotqa
+  path: ./data/hotpotqa/hotpot_dev_distractor_v1.json
+  n_samples: 1000
+  seed: 42
+  sample_with_replacement: false
+  expected_pool_size: null
+experiment:
+  output_dir: ./results
+  cache_dir: ./cache/paper_aligned_v1
+  log_dir: ./logs
+  figure_dir: ./figures
+  methods: [gbtrag]
+  keep_going: false
+model_presets:
+  llama8b:
+    llm:
+      model: gbtrag-llama8b
+      base_url: http://127.0.0.1:8001/v1
+  qwen7b:
+    llm:
+      model: gbtrag-qwen7b
+      base_url: http://127.0.0.1:8000/v1
+local_test:
+  enabled: false
+  n_samples: 3

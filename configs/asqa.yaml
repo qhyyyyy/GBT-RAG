@@ -1,0 +1,11 @@
+data:
+  name: asqa
+  path: ./data/asqa/dev.json
+  n_samples: 500
+  seed: 42
+  sample_with_replacement: true
+  expected_pool_size: 948
+gbtrag:
+  compress_output: true
+  compress_target_words: 65
+  longform_agg_target_words: 250

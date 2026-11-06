@@ -1,0 +1,6 @@
+data:
+  name: musique
+  path: ./data/musique/musique_ans_v1.0_dev.jsonl
+  n_samples: 1000
+  sample_with_replacement: false
+  expected_pool_size: null

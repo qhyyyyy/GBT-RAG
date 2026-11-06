@@ -1,0 +1,9 @@
+llm:
+  base_url: http://127.0.0.1:8001/v1
+  model: gbtrag-llama8b
+embedding:
+  model_path: /REPLACE_WITH_E5_MODEL_DIRECTORY
+reranker:
+  model_path: /REPLACE_WITH_RERANKER_DIRECTORY
+retrieval:
+  index_dir: /REPLACE_WITH_WIKIPEDIA_INDEX_DIRECTORY

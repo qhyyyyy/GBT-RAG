@@ -1,0 +1,12 @@
+local_test:
+  enabled: true
+  n_samples: 3
+data:
+  n_samples: 3
+  expected_pool_size: null
+retrieval:
+  scope: candidate_debug
+reranker:
+  enabled: false
+experiment:
+  methods: [gbtrag]

@@ -1,0 +1,21 @@
+llm:
+  base_url: http://127.0.0.1:8001/v1
+  model: gbtrag-llama8b
+embedding:
+  model_path: ./models/e5-base-v2
+  device: cpu
+reranker:
+  model_path: ./models/bge-reranker-v2-m3
+  device: cpu
+retrieval:
+  scope: global
+  index_dir: ./corpus/dpr_wikipedia_e5
+server_data_paths:
+  asqa: ./data/asqa/dev.json
+  hotpotqa: ./data/hotpotqa/hotpot_dev_distractor_v1.json
+  musique: ./data/musique/musique_ans_v1.0_dev.jsonl
+  twowiki: ./data/twowiki/dev.json
+data:
+  path: ${server_data_paths.${data.name}}
+experiment:
+  methods: [gbtrag]

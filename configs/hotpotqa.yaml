@@ -1,0 +1,6 @@
+data:
+  name: hotpotqa
+  path: ./data/hotpotqa/hotpot_dev_distractor_v1.json
+  n_samples: 1000
+  sample_with_replacement: false
+  expected_pool_size: null
